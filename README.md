@@ -2,6 +2,17 @@
 
 A Python trading bot implementing **ICT (Inner Circle Trader)** concepts on stock indices (US30, NAS100, SP500) via MetaTrader 5, with news coordination and a built-in simulator for safe demo runs.
 
+## Safe setup
+
+The repository defaults to **simulator mode**. For MT5 paper trading, copy `.env.example` to `.env`, add your own demo-account credentials, and set `mode: "mt5_paper"` in `config.yaml`:
+
+```bash
+cp .env.example .env
+python main.py --steps 200
+```
+
+Never commit `.env` or real MT5 credentials. Demo credentials are read from `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`, and optional `MT5_PATH` environment variables.
+
 ## ⚠️ MAJOR UPDATE: ICT 2022 Mentorship Implementation (Jan 2025)
 
 This bot has been **completely rewritten** to align with ICT's 2022 Mentorship course (407 pages). 
