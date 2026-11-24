@@ -162,6 +162,10 @@ class NewsFilter:
 
         self._refresh_calendar()
 
+        # Fail closed: unknown live news state must not weaken the protection gate.
+        if not self.calendar_ok:
+            return False, f"News calendar unavailable: {self.calendar_error}"
+
         # Economic calendar check
         blocked, ev = is_within_news_window(
             now, self._events,

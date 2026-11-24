@@ -8,6 +8,12 @@ import sys
 import traceback
 from datetime import datetime
 
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, Exception):
+        pass
+
 print("=" * 80)
 print("  ICT 2022 MENTORSHIP IMPLEMENTATION VERIFICATION")
 print("=" * 80)
@@ -341,6 +347,51 @@ def test_integration():
     test_step("Strategy integration", test_strategy_imports)
 
 # ============================================================================
+# TEST 8: Safety controls
+# ============================================================================
+def test_safety_controls():
+    """Test high-confidence safeguards for MSS and news availability."""
+    print("\n" + "=" * 80)
+    print("TEST 8: Safety Controls")
+    print("=" * 80)
+
+    def test_mss_requires_confirmation():
+        import pandas as pd
+        import numpy as np
+        from core.ict_2022_model import _validate_mss_with_fvg
+        from core.fair_value_gap import FVG
+
+        dates = pd.date_range("2024-01-01 10:00", periods=20, freq="5min")
+        df = pd.DataFrame({
+            "open": np.linspace(100, 101, 20),
+            "high": np.linspace(100.5, 101.5, 20),
+            "low": np.linspace(99.5, 100.5, 20),
+            "close": np.linspace(100.2, 101.2, 20),
+        }, index=dates)
+        fvg = FVG(index=8, start_time=dates[8], direction="bullish", top=101.0,
+                  bottom=100.5, size=0.5)
+        result = _validate_mss_with_fvg(df, fvg, "BUY", dates[3])
+        assert result is False, "MSS must not be inferred solely from FVG presence"
+        print("      ✅ MSS confirmation requires an aligned structure shift")
+
+    def test_news_calendar_fails_closed():
+        import time
+        from news.filter import NewsFilter, NewsFilterConfig
+
+        cfg = NewsFilterConfig(enabled=True, sentiment_enabled=False)
+        news_filter = NewsFilter(cfg)
+        news_filter.calendar_ok = False
+        news_filter.calendar_error = "test feed unavailable"
+        news_filter._last_calendar_fetch = time.time()
+        allowed, reason = news_filter.can_trade(datetime(2024, 1, 1, 10, 0))
+        assert allowed is False
+        assert "unavailable" in reason.lower()
+        print("      ✅ News calendar failure blocks trading")
+
+    test_step("MSS confirmation", test_mss_requires_confirmation)
+    test_step("News fail closed", test_news_calendar_fails_closed)
+
+# ============================================================================
 # RUN ALL TESTS
 # ============================================================================
 print("\nStarting verification tests...")
@@ -354,6 +405,7 @@ try:
     test_risk_management()
     test_config()
     test_integration()
+    test_safety_controls()
 except Exception as e:
     print(f"\n❌ CRITICAL ERROR: {e}")
     traceback.print_exc()

@@ -292,8 +292,10 @@ def _validate_mss_with_fvg(
         except KeyError:
             continue
     
-    # If no perfect alignment, accept if FVG exists (book shows this as valid)
-    return True
+    # Do not infer an MSS merely because an FVG exists. A false confirmation
+    # can produce a setup without the required structure shift.
+    logger.debug("MSS not confirmed: no matching swing aligned with FVG")
+    return False
 
 def _fvg_at_equilibrium(
     fvg: FVG, 
