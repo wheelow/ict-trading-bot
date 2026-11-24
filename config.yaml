@@ -1,6 +1,6 @@
 # ICT Trading Bot Configuration
 
-mode: "simulator"
+mode: "mt5_paper"
 
 mt5:
   login: ""

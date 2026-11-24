@@ -285,9 +285,32 @@ def test_risk_management():
             print(f"        - {price:.2f} ({pct:.0%}): {reason}")
         
         assert len(levels) > 0, "Should return TP levels"
+
+    def test_position_sizing_respects_risk_and_broker_steps():
+        from types import SimpleNamespace
+        from risk.manager import RiskConfig, RiskManager
+
+        manager = RiskManager(RiskConfig(account_balance=100.0, risk_per_trade_pct=2.0))
+        broker_info = SimpleNamespace(volume_min=0.1, volume_max=10.0, volume_step=0.1)
+        volume = manager.calculate_position_size(
+            entry=100.0, stop_loss=0.0, symbol_pip_value=1.0,
+            min_volume=0.01, max_volume=5.0, broker_symbol_info=broker_info,
+        )
+        assert volume == 0.0, "Must skip when broker minimum lot exceeds the risk budget"
+        assert manager.last_actual_risk == 0.0
+
+        manager = RiskManager(RiskConfig(account_balance=1000.0, risk_per_trade_pct=2.0))
+        broker_info = SimpleNamespace(volume_min=0.1, volume_max=10.0, volume_step=0.5)
+        volume = manager.calculate_position_size(
+            entry=12.0, stop_loss=0.0, symbol_pip_value=1.0,
+            min_volume=0.01, max_volume=5.0, broker_symbol_info=broker_info,
+        )
+        assert volume == 1.5, f"Expected volume rounded down to broker step, got {volume}"
+        assert manager.last_actual_risk <= 20.0, "Actual risk must not exceed configured risk"
     
     test_step("Stop loss calculation", test_stop_loss_calculation)
     test_step("Take profit calculation", test_take_profit_calculation)
+    test_step("Position sizing risk and broker limits", test_position_sizing_respects_risk_and_broker_steps)
 
 # ============================================================================
 # TEST 6: Config validation
@@ -357,22 +380,83 @@ def test_safety_controls():
 
     def test_mss_requires_confirmation():
         import pandas as pd
-        import numpy as np
         from core.ict_2022_model import _validate_mss_with_fvg
         from core.fair_value_gap import FVG
 
-        dates = pd.date_range("2024-01-01 10:00", periods=20, freq="5min")
-        df = pd.DataFrame({
-            "open": np.linspace(100, 101, 20),
-            "high": np.linspace(100.5, 101.5, 20),
-            "low": np.linspace(99.5, 100.5, 20),
-            "close": np.linspace(100.2, 101.2, 20),
-        }, index=dates)
-        fvg = FVG(index=8, start_time=dates[8], direction="bullish", top=101.0,
-                  bottom=100.5, size=0.5)
-        result = _validate_mss_with_fvg(df, fvg, "BUY", dates[3])
-        assert result is False, "MSS must not be inferred solely from FVG presence"
-        print("      ✅ MSS confirmation requires an aligned structure shift")
+        def make_frame(
+            direction,
+            close_break=True,
+            wick_break=False,
+            has_reference=True,
+            sweep_close_break=False,
+        ):
+            dates = pd.date_range("2024-01-01 10:00", periods=32, freq="5min")
+            close = [100.0] * len(dates)
+            high = [101.0] * len(dates)
+            low = [99.0] * len(dates)
+
+            if has_reference:
+                if direction == "BUY":
+                    high[8] = 105.0
+                else:
+                    low[8] = 95.0
+
+            low[20] = 94.0 if direction == "BUY" else 99.0
+            high[20] = 101.0 if direction == "BUY" else 106.0
+            if sweep_close_break:
+                close[20] = 106.0 if direction == "BUY" else 94.0
+                high[20] = max(high[20], close[20])
+                low[20] = min(low[20], close[20])
+
+            if close_break:
+                for i in range(21, 26):
+                    close[i] = 106.0 if direction == "BUY" else 94.0
+                    high[i] = close[i] + 1.0
+                    low[i] = close[i] - 1.0
+            elif wick_break:
+                high[22] = 106.0
+                low[22] = 94.0
+
+            df = pd.DataFrame(
+                {"open": close, "high": high, "low": low, "close": close},
+                index=dates,
+            )
+            fvg = FVG(
+                index=24,
+                start_time=dates[24],
+                direction="bullish" if direction == "BUY" else "bearish",
+                top=102.0,
+                bottom=101.0,
+                size=1.0,
+            )
+            return df, fvg, dates[20]
+
+        for direction in ("BUY", "SELL"):
+            df, fvg, sweep_time = make_frame(direction)
+            assert _validate_mss_with_fvg(df, fvg, direction, sweep_time)
+
+            df, fvg, sweep_time = make_frame(
+                direction, close_break=False, wick_break=True
+            )
+            assert not _validate_mss_with_fvg(df, fvg, direction, sweep_time), (
+                "A wick through structure must not count as a close confirmation"
+            )
+
+            df, fvg, sweep_time = make_frame(
+                direction, close_break=False, has_reference=False
+            )
+            assert not _validate_mss_with_fvg(df, fvg, direction, sweep_time), (
+                "MSS must not be inferred without a confirmed pre-sweep swing"
+            )
+
+            df, fvg, sweep_time = make_frame(
+                direction, close_break=False, sweep_close_break=True
+            )
+            assert not _validate_mss_with_fvg(df, fvg, direction, sweep_time), (
+                "The sweep candle itself must not count as a post-sweep MSS close"
+            )
+
+        print("      ✅ MSS requires a post-sweep close through a confirmed swing")
 
     def test_news_calendar_fails_closed():
         import time

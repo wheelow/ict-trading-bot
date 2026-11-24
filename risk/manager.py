@@ -12,6 +12,7 @@ Aggressive profile (default):
 from dataclasses import dataclass, field
 from typing import Optional, List
 from datetime import datetime, date
+from decimal import Decimal, ROUND_FLOOR
 import logging
 
 logger = logging.getLogger("ict.risk")
@@ -116,9 +117,12 @@ class RiskManager:
             broker_symbol_info: optional MT5 symbol_info object with real contract size
 
         Returns:
-            Volume in lots, properly sized to risk exactly risk_per_trade_pct of balance.
+            Volume in lots, sized to stay at or below risk_per_trade_pct of balance.
         """
+        self.last_actual_risk = 0.0
         risk_amount = self.current_balance * (self.cfg.risk_per_trade_pct / 100.0)
+        if risk_amount <= 0:
+            return 0.0
 
         # If we have real broker symbol info, use it for accurate sizing
         actual_pip_value = symbol_pip_value
@@ -143,25 +147,41 @@ class RiskManager:
         if risk_per_lot <= 0:
             return 0.0
 
-        # Volume = risk_amount / risk_per_lot
-        volume = risk_amount / risk_per_lot
+        broker_min = getattr(broker_symbol_info, "volume_min", None)
+        broker_max = getattr(broker_symbol_info, "volume_max", None)
+        broker_step = getattr(broker_symbol_info, "volume_step", None)
+        effective_min = max(min_volume, float(broker_min)) if broker_min and broker_min > 0 else min_volume
+        effective_max = min(max_volume, float(broker_max)) if broker_max and broker_max > 0 else max_volume
+        step = Decimal(str(broker_step if broker_step and broker_step > 0 else 0.01))
 
-        # SAFETY CAP: never exceed max_volume lots per trade
-        if volume > max_volume:
-            logger.warning(f"[RISK] {symbol_name}: calculated volume {volume:.2f} capped to {max_volume:.2f} (safety limit)")
-            volume = max_volume
+        if effective_min <= 0 or effective_max < effective_min:
+            logger.warning(f"[RISK] {symbol_name}: invalid volume limits min={effective_min}, max={effective_max}")
+            return 0.0
 
-        # Round down to nearest 0.01
-        volume = max(min_volume, round(volume * 100) / 100)
+        risk_amount_decimal = Decimal(str(risk_amount))
+        risk_per_lot_decimal = Decimal(str(risk_per_lot))
+        raw_volume = risk_amount_decimal / risk_per_lot_decimal
+        capped_volume = min(raw_volume, Decimal(str(effective_max)))
+        minimum_volume = Decimal(str(effective_min))
+        if raw_volume > Decimal(str(effective_max)):
+            logger.warning(f"[RISK] {symbol_name}: risk-sized volume {float(raw_volume):.2f} capped "
+                           f"to {effective_max:.2f} lots")
 
-        # Final validation: verify actual risk doesn't exceed 2x configured (safety net)
-        actual_risk = volume * risk_per_lot
-        max_allowed_risk = risk_amount * 2  # allow 2x as safety margin for rounding
-        if actual_risk > max_allowed_risk:
-            logger.warning(f"[RISK] {symbol_name}: actual risk ${actual_risk:.2f} exceeds limit ${max_allowed_risk:.2f}, "
-                          f"reducing volume")
-            volume = max(min_volume, round((risk_amount / risk_per_lot) * 100) / 100)
-            actual_risk = volume * risk_per_lot  # recompute after the cap
+        volume_decimal = (capped_volume / step).to_integral_value(rounding=ROUND_FLOOR) * step
+        if volume_decimal < minimum_volume:
+            logger.warning(f"[RISK] {symbol_name}: broker minimum volume {effective_min:.4f} exceeds "
+                           f"risk-sized volume {float(capped_volume):.4f}; skipping trade")
+            return 0.0
+
+        actual_risk = float(volume_decimal * risk_per_lot_decimal)
+        if actual_risk > risk_amount:
+            volume_decimal -= step
+            if volume_decimal < minimum_volume:
+                logger.warning(f"[RISK] {symbol_name}: no valid broker volume fits configured risk; skipping trade")
+                return 0.0
+            actual_risk = float(volume_decimal * risk_per_lot_decimal)
+
+        volume = float(volume_decimal)
 
         # Expose the final dollar risk so callers (main.py trade-logging) can
         # report the true figure instead of the pip_value fallback. Set after

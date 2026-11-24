@@ -257,45 +257,45 @@ def _validate_mss_with_fvg(
     direction: str,
     sweep_time: pd.Timestamp
 ) -> bool:
-    """Validate Market Structure Shift with FVG (Step 3) - book requires FVG in displacement leg"""
-    # The key validation is that FVG EXISTS in the displacement leg
-    # and it's AFTER the sweep - both already confirmed by _find_displacement_with_fvg
-    
-    # Additional check: ensure price actually shifted structure
+    """Require a post-sweep close through the latest confirmed opposing swing."""
     try:
-        fvg_idx = df.index.get_loc(fvg.start_time)
-        sweep_idx = df.index.get_loc(sweep_time)
-    except KeyError:
+        fvg_idx = int(df.index.get_loc(fvg.start_time))
+        sweep_idx = int(df.index.get_loc(sweep_time))
+    except (KeyError, TypeError):
         return False
     
-    if fvg_idx <= sweep_idx:
+    # An FVG is only confirmed by its third candle, one bar after its middle.
+    confirmation_idx = fvg_idx + 1
+    if fvg_idx <= sweep_idx or confirmation_idx >= len(df):
         return False
-    
-    # For MSS, we need a swing point that's horizontal to FVG candles
-    # Book (p.246): "Swing (high or low) must be exactly horizontal to one of the three candles in the FVG"
-    swings = find_swings(df, lookback=3)
-    if not swings:
+
+    # Only use swings fully formed before the sweep; later pivots would make
+    # the confirmation depend on future price action.
+    confirmed_data = df.iloc[:confirmation_idx + 1]
+    swings = find_swings(confirmed_data, lookback=3)
+    reference_kind = "high" if direction == "BUY" else "low"
+    prior_swings = [
+        swing for swing in swings
+        if swing.kind == reference_kind and swing.index < sweep_idx
+    ]
+    if not prior_swings:
+        logger.debug("MSS not confirmed: no pre-sweep opposing swing")
         return False
-    
-    # Check if any swing is within ±2 bars of FVG
-    for swing in swings:
-        try:
-            swing_idx = df.index.get_loc(swing.timestamp)
-            if abs(swing_idx - fvg_idx) <= 2:
-                # Validate swing type matches direction
-                if direction == "BUY" and swing.kind == "low":
-                    logger.debug(f"MSS confirmed: Bullish swing at {swing.timestamp}")
-                    return True
-                elif direction == "SELL" and swing.kind == "high":
-                    logger.debug(f"MSS confirmed: Bearish swing at {swing.timestamp}")
-                    return True
-        except KeyError:
-            continue
-    
-    # Do not infer an MSS merely because an FVG exists. A false confirmation
-    # can produce a setup without the required structure shift.
-    logger.debug("MSS not confirmed: no matching swing aligned with FVG")
-    return False
+
+    reference = max(prior_swings, key=lambda swing: swing.index)
+    closes_after_sweep = df["close"].iloc[sweep_idx + 1:confirmation_idx + 1]
+    if direction == "BUY":
+        confirmed = bool((closes_after_sweep > reference.price).any())
+    else:
+        confirmed = bool((closes_after_sweep < reference.price).any())
+
+    if not confirmed:
+        logger.debug(
+            "MSS not confirmed: no post-sweep close through %s at %.5f",
+            reference.kind,
+            reference.price,
+        )
+    return confirmed
 
 def _fvg_at_equilibrium(
     fvg: FVG, 
