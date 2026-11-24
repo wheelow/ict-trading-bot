@@ -1,0 +1,43 @@
+# Secrets
+.env
+.env.*
+!.env.example
+config.local.yaml
+*.key
+*.pem
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime data and logs
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+backtest_output.txt
+quick_results.txt
+quick_test.py
+test_results.txt
+verify_results.txt
+data/backtest*.txt
+
+# Accidentally nested project copy
+ict_trading_bot/
+.zcode/
+
+# Internal reference/text artifacts
+_ict_book.txt
+_order_lines.txt

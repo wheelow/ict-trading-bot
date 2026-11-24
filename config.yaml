@@ -1,0 +1,138 @@
+# ICT Trading Bot Configuration
+
+mode: "simulator"
+
+mt5:
+  login: ""
+  password: ""
+  server: "FBS-Demo"
+  path: ""
+
+symbols:
+  - name: "US30"
+    pip_value: 1.0
+    contract_size: 1.0
+    min_volume: 0.01
+  - name: "US100"
+    pip_value: 1.0
+    contract_size: 1.0
+    min_volume: 0.01
+  - name: "US500"
+    pip_value: 1.0
+    contract_size: 1.0
+    min_volume: 0.01
+
+timeframes:
+  bias_tf: "H1"        # higher timeframe for bias / dealing range
+  structure_tf: "M15"  # market structure (BOS/CHoCH/MSS)
+  entry_tf: "M5"       # entry timeframe
+  daily_tf: "D1"       # PDH/PDL, IPDA ranges (Phase 2)
+  h4_tf: "H4"          # HTF PD arrays (Phase 2)
+
+strategy:
+  # === ICT 2022 Model entry selector (Phase 4) ===
+  # "ict_2022"  -> book's 2022 Mentorship Model (liquidity grab -> displacement+FVG -> MSS -> FVG equilibrium)
+  # "ote"       -> legacy OTE retracement entry (kept for A/B testing)
+  entry_model: "ict_2022"
+
+  # === KILLZONES — all times in New York local time (EST/EDT), DST-auto via zoneinfo ===
+  # Book Ch.11 p.92. These OVERRIDE the old UTC-string keys below.
+  killzones_ny:
+    Asia:         ["20:00", "00:00"]   # 8pm -> midnight NY
+    London:       ["02:00", "05:00"]   # London Open Kill Zone (LOKZ)
+    "NY AM":      ["07:00", "10:00"]   # New York Open Kill Zone (NYOKZ)
+    "London Close": ["10:00", "12:00"] # London Close Kill Zone (LCKZ)
+    CBDR:         ["14:00", "20:00"]   # Central Bank Dealers Range
+
+  # Non-killzone session windows (Phase 1+5). Book Ch.28.
+  sessions_ny:
+    "Silver Bullet": ["10:00", "11:00"]  # displacement window
+    "NY PM":         ["13:30", "16:00"]  # PM session
+    "NY Lunch":      ["12:00", "13:30"]  # lunch raid
+    "AM Range":      ["09:30", "12:00"]  # RTH AM
+
+  # === Legacy keys (DEPRECATED — kept only so old configs still load) ===
+  # The bot now uses killzones_ny above. These are ignored except for a deprecation warning.
+  london_kz_start: "02:00"
+  london_kz_end: "05:00"
+  ny_am_kz_start: "07:00"
+  ny_am_kz_end: "10:00"
+  ny_pm_kz_start: "13:30"
+  ny_pm_kz_end: "16:00"
+
+  # === OTE / Fib (used as quality score in 2022 model; primary entry in legacy) ===
+  ote_min: 0.62
+  ote_max: 0.79
+  ote_sweet_spot: 0.705              # book Ch.16 "works 80% of the time"
+  fvg_min_size_pips: 5
+  fvg_lookback: 50
+  liquidity_lookback: 20
+  sweep_buffer_pips: 2
+  bos_buffer_pips: 2
+  struct_window_bars: 30
+  struct_swing_lookback: 2
+  enable_power_of_3: true
+  asian_range_start: "20:00"
+  asian_range_end: "00:00"
+
+  # === Phase 4: 2022 Model parameters ===
+  displacement_atr_min: 1.5          # displacement must be >= 1.5x ATR (institutional sponsorship)
+  fvg_at_equilibrium_tolerance: 0.20 # FVG may be within 20% of displacement range from 50%
+  require_mss_after_grab: true       # require Market Structure Shift after liquidity grab
+
+  # === Phase 5: filters ===
+  require_discount_to_buy: true      # book Ch.16: only buy in discount, sell in premium
+  dealing_range_tf: "H1"             # timeframe for premium/discount calc
+  prefer_days_mon_tue_wed: true      # book Ch.25/32: best days
+  avoid_thu_fri_nfp_week: true       # book Ch.18: avoid Thu/Fri of NFP week
+  avoid_fomc_all_day: true           # book Ch.18: FOMC day is taboo
+  avoid_mon_after_nfp: true          # book Ch.18: Monday after NFP is volatile
+
+risk:
+  account_balance: 55996.70
+  risk_per_trade_pct: 2.0
+  max_daily_drawdown_pct: 5.0
+  max_trades_per_day: 5
+  reward_to_risk: 3.0
+  breakeven_at_rr: 1.5    # was 1.0 — too tight on M5; got yanked to BE before running
+  partial_close_at_rr: 2.0
+  trailing_stop_pips: 10
+
+news:
+  enabled: true
+  block_minutes_before: 15
+  block_minutes_after: 15
+  # Apply the news gate in backtests too, using the local archive
+  # (data/news_calendar.db). Days with no archived coverage are skipped
+  # gracefully (logged once), not treated as "no news". Coverage grows
+  # automatically as the live bot archives weeks — no API key needed.
+  backtest_news: true
+  high_impact_keywords:
+    - "Nonfarm Payrolls"
+    - "NFP"
+    - "CPI"
+    - "FOMC"
+    - "Fed Chair"
+    - "Interest Rate"
+    - "Unemployment"
+    - "GDP"
+    - "PMI"
+    - "Retail Sales"
+  calendar_url: "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+  sentiment_enabled: true
+  sentiment_threshold: 0.5
+  rss_feeds:
+    - "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^DJI&region=US&lang=en-US"
+    - "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^IXIC&region=US&lang=en-US"
+    - "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US"
+
+notifications:
+  telegram_enabled: false
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+  log_to_file: true
+  log_level: "INFO"
+
+execution:
+  poll_interval_seconds: 5
+  timezone: "UTC"
